@@ -1,4 +1,4 @@
-# PHP App CVE Scanner 2.0 — GUI Edition
+# PHP App CVE Scanner 2.0 
 
 **Crawl · fingerprint · prove** recent PHP core vulnerabilities on a target web application — with primary focus on the **2026 php2shell** family.
 
@@ -97,7 +97,6 @@ python3 -c "import tkinter; print('tkinter OK')"
 ```bash
 git clone https://github.com/<you>/php-app-cve-scanner.git
 cd php-app-cve-scanner
-# two files, nothing to install
 ```
 
 Both `php_app_cve_scanner_gui.py` and `php_app_cve_scanner.py` must be in the **same directory**. The GUI loads the scanner engine automatically at startup.
