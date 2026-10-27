@@ -1,12 +1,13 @@
-# PHP App CVE Scanner
-
-**by Scanifier** — authorized security assessment tooling.
+# PHP App CVE Scanner 2.0 
 
 **Crawl · fingerprint · prove** recent PHP core vulnerabilities on a target web application — with primary focus on the **2026 php2shell** family.
 
+Now featuring a **modern dark-themed graphical interface** built on Python's standard `tkinter` library — no extra pip packages required.
+
 | | |
 |---|---|
-| **Script** | `php_app_cve_scanner.py` |
+| **GUI Script** | `php_app_cve_scanner_gui.py` |
+| **Scanner Engine** | `php_app_cve_scanner.py` (loaded automatically) |
 | **Language** | Python 3.9+ (stdlib only — no pip deps) |
 | **Posture** | Proof-oriented. Safe markers only. No reverse shells, no destructive commands. |
 | **License** | Use only on systems you are authorized to test. |
@@ -19,7 +20,7 @@
 2. **Fingerprints** PHP version, SAPI, server stack (`X-Powered-By`, banners, phpinfo, cookies, tech hints)
 3. **Evaluates** recent PHP core CVEs against live evidence
 4. **Probes** `session.upload_progress` surfaces used by the 2026 RCE chain (multipart + `PHP_SESSION_UPLOAD_PROGRESS`)
-5. **Reports** findings to the terminal and a JSON file
+5. **Reports** findings in the GUI (Live Log, Findings cards, JSON viewer) and saves a JSON file
 
 ---
 
@@ -71,21 +72,22 @@ When version / SAPI evidence allows, the scanner also maps:
 - **CVE-2024-5458**, **CVE-2024-11233**, **CVE-2024-11234**  
 - **CVE-2025-1217**, **CVE-2025-1734**, **CVE-2025-1736**, **CVE-2025-1861**, **CVE-2025-1220**, **CVE-2025-6491**
 
-Use `--only-2026` to skip secondary checks.
+Enable/disable via the **"Only 2026 CVEs"** checkbox in the GUI.
 
 ---
 
 ## Requirements
 
 - Python **3.9+**
+- `tkinter` (bundled with CPython on Windows/macOS; on Linux: `sudo apt install python3-tk`)
 - No third-party packages (uses only the standard library)
 - Network reachability to the target
 - **Written authorization** to test the target
 
 ```bash
-# optional sanity check
+# sanity check
 python3 --version
-python3 php_app_cve_scanner.py --help
+python3 -c "import tkinter; print('tkinter OK')"
 ```
 
 ---
@@ -95,75 +97,59 @@ python3 php_app_cve_scanner.py --help
 ```bash
 git clone https://github.com/<you>/php-app-cve-scanner.git
 cd php-app-cve-scanner
-# single file — nothing to install
-chmod +x php_app_cve_scanner.py
 ```
 
-Or drop `php_app_cve_scanner.py` anywhere on your PATH.
+Both `php_app_cve_scanner_gui.py` and `php_app_cve_scanner.py` must be in the **same directory**. The GUI loads the scanner engine automatically at startup.
 
 ---
 
-## Usage
-
-```text
-python3 php_app_cve_scanner.py <URL> [options]
-```
-
-### Quick start
+## Launching the GUI
 
 ```bash
-# Basic scan
-python3 php_app_cve_scanner.py https://app.example/
-
-# 2026 CVEs only + JSON out
-python3 php_app_cve_scanner.py https://app.example/ --only-2026 -o report.json
-
-# Deeper crawl
-python3 php_app_cve_scanner.py https://app.example/ -d 3 -m 150 -o report.json
-
-# Authenticated / custom headers
-python3 php_app_cve_scanner.py https://app.example/ \
-  --cookie "PHPSESSID=abc; session=xyz" \
-  -H "Authorization: Bearer TOKEN"
-
-# Heavier upload_progress / OOM-adjacent probes
-python3 php_app_cve_scanner.py https://app.example/ --aggressive --only-2026
+python3 php_app_cve_scanner_gui.py
 ```
 
-### CLI reference
+On Windows you can also double-click `php_app_cve_scanner_gui.py` if `.py` files are associated with Python.
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `target` | *(required)* | Root URL (`https://…`) |
-| `-d`, `--depth` | `3` | Crawl depth |
-| `-m`, `--max-pages` | `100` | Max pages to fetch |
-| `-o`, `--output` | auto | JSON report path |
-| `-t`, `--timeout` | `12.0` | Per-request timeout (seconds) |
-| `--cookie` | | Cookie header value |
-| `-H`, `--header` | | Extra header (`Name: value`); repeatable |
-| `--ua` | `PHP-App-CVE-Scanner/2.0` | User-Agent |
-| `--delay` | `0` | Delay between requests (seconds) |
-| `--secure` | off | Verify TLS certificates |
-| `--subdomains` | off | Follow links to sibling subdomains |
-| `--robots` | off | Respect `robots.txt` |
-| `--aggressive` | off | Heavier multipart / upload_progress probes |
-| `--only-2026` | off | Only CVE-2026-109618 / 109619 / 115560 |
-| `-q`, `--quiet` | off | Less crawl chatter |
+---
 
-### Exit codes
+## GUI Overview
 
-| Code | Meaning |
-|------|---------|
-| `0` | No `CONFIRMED` / `LIKELY` findings |
-| `1` | At least one `CONFIRMED` or `LIKELY` finding |
-| `2` | Bad args / target unreachable |
+The application opens as a **1200 × 780** dark-themed window with two main areas:
 
-Useful in CI:
+### Left panel — Configuration
 
-```bash
-python3 php_app_cve_scanner.py https://staging.example/ --only-2026 -o out.json
-echo $?   # 1 → triage required
-```
+| Section | Controls |
+|---------|----------|
+| **Target** | Target URL field |
+| **Crawl Settings** | Depth · Max Pages · Timeout · Delay |
+| **Auth / Headers** | Cookie · Extra Header · User-Agent |
+| **Scan Flags** | Checkboxes (see table below) |
+| **Output** | JSON report path + file browser button |
+| **Actions** | ▶ Start Scan · ⏹ Stop · indeterminate progress bar |
+
+#### Scan flag checkboxes
+
+| Flag | Effect |
+|------|--------|
+| Only 2026 CVEs | Only test CVE-2026-109618 / 109619 / 115560 |
+| Aggressive probes | Heavier multipart / OOM-adjacent probes |
+| Verify TLS | Verify TLS certificates (off by default) |
+| Follow subdomains | Follow links to sibling subdomains |
+| Respect robots.txt | Honour `robots.txt` exclusions |
+| Quiet mode | Less crawl chatter in the Live Log |
+
+### Right panel — Output (three tabs)
+
+| Tab | Content |
+|-----|---------|
+| 📋 **Live Log** | Real-time colour-coded output streamed from the scanner engine. Lines are auto-coloured by severity keyword (`[!]` = red, `[+]` = orange, `[-]` = green, etc.). A **Clear** button resets the log. |
+| 🔍 **Findings** | Card-based view of every finding after the scan completes. Each card shows CVE ID, severity badge, status badge, confidence, title, evidence list, affected URLs, and remediation advice. Summary pills (CONFIRMED / LIKELY / POSSIBLE / SAFE) appear at the top. |
+| **{ } JSON Report** | Pretty-printed JSON of the full report. A **Save As…** button lets you export it anywhere. |
+
+### Status bar
+
+Shows scan state (*Ready → Scanning… → Done*) on the left and elapsed time on the right.
 
 ---
 
@@ -192,34 +178,9 @@ The scanner **does not claim RCE** unless evidence supports it. Status values:
 
 ---
 
-## Sample console output
-
-```text
-[+] Target: https://app.example/
-[+] Mode: 2026 PHP CVEs only (CVE-2026-109618, CVE-2026-109619, CVE-2026-115560)
-[+] Reachable (status=200)
-...
-[PROBE] session.upload_progress / php2shell primitives…
-...
-════════════════════════════════════════════════════════
- PHP App CVE Scanner — Results
-════════════════════════════════════════════════════════
- PHP version : 8.2.3  (phpinfo-body)
- Server      : Apache/2.4.41 (Ubuntu)
- ...
- [CONFIRMED] CVE-2026-109619  CRITICAL
-   session.upload_progress stale global state UAF → RCE
-   evidence:
-     - PHP 8.2.3 < 8.2.35 fix floor
-     - phpinfo: session.upload_progress.enabled=On
-     - Apache / mod_php likely
- ...
-[+] JSON report → /path/php_cve_report_app.example_....json
-```
-
----
-
 ## JSON report shape
+
+The JSON viewer tab and any saved file follow this schema:
 
 ```json
 {
@@ -265,7 +226,7 @@ The scanner **does not claim RCE** unless evidence supports it. Status values:
 3. **Restart** php-fpm / Apache / workers.
 4. Prefer **PHP-FPM + nginx** over legacy **mod_php prefork** where possible (reduces 109619 blast radius; still patch).
 5. Do not flip `session.serialize_handler` with `ini_set()` at runtime (115560 combo).
-6. Re-scan with this tool after changes; expect `NOT_VULNERABLE` / mitigated signals.
+6. Re-scan with this tool after changes; expect `NOT_VULNERABLE` / mitigated signals in the Findings tab.
 7. Remove public `phpinfo` / `info.php` and version banners in production.
 
 ---
@@ -274,9 +235,9 @@ The scanner **does not claim RCE** unless evidence supports it. Status values:
 
 - **Authorized testing only.** Running this against systems without permission may be illegal.
 - Probes use **non-destructive markers** (no reverse shells, no `rm`, no credential stuffing).
-- `--aggressive` increases request size/count for stronger signals — still proof-oriented, not exploit delivery.
-- Default TLS verification is **off** (common in lab/pentest); use `--secure` when you need cert checks.
-- Rate politely on production: `--delay 0.2` (or higher) and modest `-m`.
+- **Aggressive** mode increases request size/count for stronger signals — still proof-oriented, not exploit delivery.
+- Default TLS verification is **off** (common in lab/pentest); enable **Verify TLS** in the GUI when you need cert checks.
+- Rate politely on production: set **Delay** to `0.2` (or higher) and use a modest **Max Pages** value.
 
 ---
 
@@ -284,32 +245,52 @@ The scanner **does not claim RCE** unless evidence supports it. Status values:
 
 ```text
 .
-├── README.md                 # this file
-├── php_app_cve_scanner.py    # main scanner (single file)
-└── (optional lab / PoC dirs if you vendor them)
+├── README.md                    # this file
+├── php_app_cve_scanner_gui.py   # GUI launcher (run this)
+└── php_app_cve_scanner.py       # scanner engine (loaded by the GUI automatically)
 ```
+
+> The CLI script (`php_app_cve_scanner.py`) still works standalone if you prefer a headless / CI workflow.
 
 ---
 
+## CLI fallback (headless / CI)
 
-## Accuracy notes (negative control)
+If you need to run the scanner without a display (e.g. in CI, Docker, or a remote SSH session), you can still use the underlying engine directly:
 
-Validated against **speeqr.com** (static/JS marketing site behind Cloudflare — **no PHP**):
+```bash
+python3 php_app_cve_scanner.py <URL> [options]
+```
 
-| Before fix | After fix |
-|------------|-----------|
-| `Tech: PHP` from seed `.php` URL probes (even on HTTP 404) | `Tech: n/a`, `0 .php URLs` |
-| 3× `POSSIBLE` (low) for 2026 CVEs with unknown version | 3× `NOT_APPLICABLE` |
-| Exit 0 (no CONFIRMED/LIKELY) but noisy POSSIBLE list | Exit 0, **no findings needing attention** |
+Quick reference:
 
-**Rules now enforced:**
-1. Seed paths like `/info.php` are **not** PHP evidence if they 404 or return non-PHP bodies.
-2. `Tech: PHP` requires version, `X-Powered-By`, `PHPSESSID`, phpinfo, or a **live** PHP response signal.
-3. 2026 CVEs are **NOT_APPLICABLE** without a vulnerable version fingerprint and/or confirmed `upload_progress` signal — unknown-version alone is not reported as POSSIBLE.
+| Flag | Default | Description |
+|------|---------|-------------|
+| `target` | *(required)* | Root URL (`https://…`) |
+| `-d`, `--depth` | `3` | Crawl depth |
+| `-m`, `--max-pages` | `100` | Max pages to fetch |
+| `-o`, `--output` | auto | JSON report path |
+| `-t`, `--timeout` | `12.0` | Per-request timeout (seconds) |
+| `--cookie` | | Cookie header value |
+| `-H`, `--header` | | Extra header (`Name: value`); repeatable |
+| `--ua` | `PHP-App-CVE-Scanner/2.0` | User-Agent |
+| `--delay` | `0` | Delay between requests (seconds) |
+| `--secure` | off | Verify TLS certificates |
+| `--subdomains` | off | Follow links to sibling subdomains |
+| `--robots` | off | Respect `robots.txt` |
+| `--aggressive` | off | Heavier multipart / upload_progress probes |
+| `--only-2026` | off | Only CVE-2026-109618 / 109619 / 115560 |
+| `-q`, `--quiet` | off | Less crawl chatter |
 
-Positive control (`kissan.kp.gov.pk`, PHP 8.2.3 + phpinfo): still reports **LIKELY** for 109618/109619.
+Exit codes: `0` = no CONFIRMED/LIKELY · `1` = at least one · `2` = bad args / unreachable.
 
-The gov.pk proof report used a stricter batch validator (live version below fix floor → HIGH; + phpinfo `upload_progress=On` → CONFIRMED). That pipeline never promoted “unknown version” hosts to proven.
+```bash
+# CI example
+python3 php_app_cve_scanner.py https://staging.example/ --only-2026 -o out.json
+echo $?   # 1 → triage required
+```
+
+---
 
 ## Limitations
 
@@ -317,7 +298,7 @@ The gov.pk proof report used a stricter batch validator (live version below fix 
 - Version must be observable (headers, phpinfo, errors) or findings stay `POSSIBLE`.
 - Full RCE exploitation is **out of scope** by design.
 - WAF/CDN soft-200 pages can spoof content; treat body validation as part of human review.
-- Fix floors are encoded from the 2026-10-21 advisory — update `PHP2SHELL_FIXED` in the script if newer releases ship.
+- Fix floors are encoded from the 2026-10-21 advisory — update `PHP2SHELL_FIXED` in `php_app_cve_scanner.py` if newer releases ship.
 
 ---
 
@@ -346,14 +327,17 @@ This tool is provided for **defensive security assessment**, vulnerability manag
 
 ## Credits
 
-- **Veiliux** — scanner design, accuracy gates, and field validation
 - PHP security advisories / GHSA entries for CVE-2026-109618 (`GHSA-w8hw-w9fx-j79w`) and CVE-2026-109619 (`GHSA-6wmf-4rv5-p3rp`)
 - php.net 2026-10-21 security release fix floors
 
 ---
 
-## Quick copy-paste
+## Quick start
 
 ```bash
+# Launch the GUI
+python3 php_app_cve_scanner_gui.py
+
+# Or headless (CLI)
 python3 php_app_cve_scanner.py https://TARGET/ --only-2026 -d 2 -m 80 -o php2026_report.json
 ```
