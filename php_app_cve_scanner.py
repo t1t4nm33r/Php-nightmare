@@ -22,6 +22,8 @@ Usage:
   python3 php_app_cve_scanner.py https://target.example/ --cookie "SESS=abc" --aggressive
 
 Authorized testing only. RCE probes use safe markers (no reverse shells / no destructive cmds).
+
+Author: Veiliux
 """
 
 from __future__ import annotations
@@ -491,8 +493,27 @@ class Crawler:
         self._extract_params(url)
         self._extract_params(r.get("final_url") or url)
         path = urllib.parse.urlparse(url).path.lower()
-        if path.endswith(".php") or ".php?" in url.lower() or "php" in ct.lower():
+        # Only count REAL PHP evidence — never seed-path 404s or SPA soft-200s
+        st = r.get("status")
+        hdrs = r.get("headers") or {}
+        powered = str(hdrs.get("x-powered-by") or "")
+        set_cookie = str(hdrs.get("set-cookie") or "")
+        php_signal = (
+            "php" in powered.lower()
+            or "PHPSESSID" in set_cookie
+            or bool(re.search(r"(?:PHP (?:Parse|Fatal) error|Warning:).*\.php", text or "", re.I))
+            or ("phpinfo()" in (text or "") and "PHP Version" in (text or ""))
+            or (ct and "php" in ct.lower() and "text/html" not in ct.lower())
+        )
+        if st is not None and st < 400 and php_signal:
             self.php_urls.add(url_key(url))
+        elif st == 200 and (path.endswith(".php") or ".php?" in url.lower()):
+            # 200 on .php only counts if not a generic SPA catch-all / plain 404 body
+            body_l = (text or "")[:200].strip().lower()
+            if body_l and body_l not in ("not found", "404 not found", "404") and len(body or b"") > 32:
+                # still require some server-side cue; pure static SPA HTML is not PHP
+                if "x-powered-by" in {k.lower() for k in hdrs} or "PHPSESSID" in set_cookie:
+                    self.php_urls.add(url_key(url))
 
         links, forms = set(), []
         if text and ("html" in ct.lower() or "<html" in text.lower() or "<!doctype" in text.lower()
@@ -710,8 +731,16 @@ def fingerprint(crawler: Crawler, client: HttpClient) -> Fingerprint:
         versions.sort(key=rank)
         fp.php_version, fp.php_version_source = versions[0]
 
-    if "PHP" not in fp.tech and (fp.php_version or fp.powered_by or crawler.php_urls
-                                 or any(c.upper() == "PHPSESSID" for c in fp.cookies)):
+    # Require real PHP signals — crawler seed .php paths alone are NOT evidence
+    real_php = bool(
+        fp.php_version
+        or fp.powered_by
+        or crawler.php_urls
+        or any(c.upper() == "PHPSESSID" for c in fp.cookies)
+        or fp.upload_progress_signal
+        or any("phpinfo" in h.lower() for h in fp.sapi_hints)
+    )
+    if "PHP" not in fp.tech and real_php:
         fp.tech.append("PHP")
     fp.tech = sorted(set(fp.tech))
     fp.sapi_hints = list(dict.fromkeys(fp.sapi_hints))
@@ -964,7 +993,14 @@ class Scanner:
         if self.crawler.upload_forms:
             evidence.append(f"Found {len(self.crawler.upload_forms)} multipart file-upload form(s) in crawl")
 
-        php_present = "PHP" in self.fp.tech or bool(self.crawler.php_urls) or bool(self.fp.php_version)
+        php_present = bool(
+            self.fp.php_version
+            or self.fp.powered_by
+            or self.fp.upload_progress_signal
+            or self.crawler.php_urls
+            or ("PHP" in self.fp.tech)
+            or any(c.upper() == "PHPSESSID" for c in self.fp.cookies)
+        )
 
         if ver_vuln is False:
             self.add(Finding(
@@ -1002,6 +1038,22 @@ class Scanner:
         if ver_vuln is None and php_present:
             score += 1  # unknown version but PHP
 
+        # Gate: no vulnerable version and no upload_progress proof → NOT_APPLICABLE
+        if ver_vuln is not True and not self.fp.upload_progress_signal and not (
+            probe.get("session_set_on_multipart") or probe.get("progress_key_reflected")
+        ):
+            self.add(Finding(
+                cve=cve, title=meta["title"], severity=meta["severity"],
+                status="NOT_APPLICABLE", confidence="medium" if not php_present else "low",
+                evidence=evidence + [
+                    "No vulnerable PHP version observed and no session.upload_progress confirmation. "
+                    "Cannot prove CVE-2026-109619 on this target."
+                ],
+                remediation=meta["remediation"],
+                notes="Requires version below fix floor and/or phpinfo upload_progress=On for CONFIRMED/LIKELY.",
+            ))
+            return
+
         if score >= 6:
             status, conf = "LIKELY", "medium"
         elif score >= 3:
@@ -1035,7 +1087,14 @@ class Scanner:
         evidence.extend([s for s in (probe.get("signals") or []) if "error" in s.lower() or "Aggressive" in s or "Timing" in s])
         evidence.append("Single-request OOM/bailout corruption family; shares trigger surface with upload_progress / heavy multipart")
 
-        php_present = "PHP" in self.fp.tech or bool(self.crawler.php_urls) or bool(self.fp.php_version)
+        php_present = bool(
+            self.fp.php_version
+            or self.fp.powered_by
+            or self.fp.upload_progress_signal
+            or self.crawler.php_urls
+            or ("PHP" in self.fp.tech)
+            or any(c.upper() == "PHPSESSID" for c in self.fp.cookies)
+        )
         affected = [probe["best_url"]] if probe.get("best_url") else (probe.get("tested_urls") or [])[:3]
 
         if ver_vuln is False:
@@ -1057,7 +1116,14 @@ class Scanner:
             status = "LIKELY" if (self.fp.is_mod_php_likely or self.fp.is_apache or probe.get("server_errors_on_multipart")) else "POSSIBLE"
             conf = "medium" if status == "LIKELY" else "low"
         else:
-            status, conf = "POSSIBLE", "low"
+            # unknown version without proof → not a finding
+            self.add(Finding(
+                cve=cve, title=meta["title"], severity=meta["severity"],
+                status="NOT_APPLICABLE", confidence="low",
+                evidence=evidence + ["No vulnerable PHP version fingerprint — cannot prove CVE-2026-109618."],
+                remediation=meta["remediation"],
+            ))
+            return
 
         evidence.append(
             "Interim incomplete mitigation: memory_limit=-1 via php_admin_value. Patch is mandatory."
@@ -1088,20 +1154,34 @@ class Scanner:
             if re.search(r"Failed to decode session object", t, re.I):
                 evidence.append(f"Session decode failure message at {p.get('url')} (classic cross-handler symptom)")
 
-        php_present = "PHP" in self.fp.tech or bool(self.crawler.php_urls) or bool(self.fp.php_version)
+        php_present = bool(
+            self.fp.php_version
+            or self.fp.powered_by
+            or self.fp.upload_progress_signal
+            or self.crawler.php_urls
+            or ("PHP" in self.fp.tech)
+            or any(c.upper() == "PHPSESSID" for c in self.fp.cookies)
+        )
 
         if not php_present:
-            status, conf = "NOT_APPLICABLE", "low"
+            status, conf = "NOT_APPLICABLE", "medium"
+            evidence.append("No reliable PHP footprint.")
         elif ver_vuln is False:
-            # Patched builds still may need upload_progress off for residual combos; advisory is informational
             status, conf = "NOT_VULNERABLE", "low"
             evidence.append("On fix-floor builds residual risk is mainly the config combo; keep upload_progress off")
-        else:
+        elif ver_vuln is True and (self.fp.upload_progress_signal or probe.get("session_set_on_multipart")):
             status, conf = "POSSIBLE", "low"
             evidence.append(
-                "Black-box cannot fully confirm the three-leg combo without app source/ini. "
-                "If upload_progress is on AND app switches serialize_handler at runtime → exploitable unserialize."
+                "Version in range + upload_progress signals. Full three-leg combo still needs app/ini confirmation."
             )
+        elif ver_vuln is True:
+            status, conf = "POSSIBLE", "low"
+            evidence.append(
+                "Version in affected range but upload_progress not confirmed; three-leg combo unproven."
+            )
+        else:
+            status, conf = "NOT_APPLICABLE", "low"
+            evidence.append("PHP version unknown — cannot prove CVE-2026-115560.")
 
         self.add(Finding(
             cve=cve, title=meta["title"], severity=meta["severity"],
